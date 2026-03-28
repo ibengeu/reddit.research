@@ -104,11 +104,9 @@
         return first.ToLower() switch
         {
             "ask"      => "Chat",
-            "browse"   => "Document Search",
             "library"  => "Saved Threads",
             "crawl"    => "Ingestion Jobs",
             "settings" => "Settings",
-            ""         => "Overview",
             _          => first
         };
     }
