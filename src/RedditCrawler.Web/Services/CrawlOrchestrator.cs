@@ -103,7 +103,7 @@ public sealed class CrawlOrchestrator
                 _logger.LogInformation("Crawling r/{Subreddit}", subreddit);
                 AddLog($"Crawling r/{subreddit}...");
 
-                await foreach (var (post, comments) in _crawler.CrawlAsync(subreddit, _cts.Token))
+                await foreach (var (post, comments) in _crawler.CrawlAsync(subreddit, limit, _cts.Token))
                 {
                     var chunks = _transformer.Transform(post, comments).ToList();
                     if (minScore > 0)

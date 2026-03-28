@@ -6,7 +6,7 @@ namespace RedditCrawler.Services;
 
 public interface ICrawlerService
 {
-    IAsyncEnumerable<(RedditPost Post, List<RedditPost> Comments)> CrawlAsync(string subreddit, CancellationToken ct = default);
+    IAsyncEnumerable<(RedditPost Post, List<RedditPost> Comments)> CrawlAsync(string subreddit, int limit, CancellationToken ct = default);
 }
 
 public sealed class CrawlerService : ICrawlerService
@@ -24,14 +24,15 @@ public sealed class CrawlerService : ICrawlerService
 
     public async IAsyncEnumerable<(RedditPost Post, List<RedditPost> Comments)> CrawlAsync(
         string subreddit,
+        int limit,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         var fetched = 0;
         string? before = null;
 
-        while (fetched < _config.Limit)
+        while (fetched < limit)
         {
-            var batchSize = Math.Min(100, _config.Limit - fetched);
+            var batchSize = Math.Min(100, limit - fetched);
 
             _logger.LogInformation("Fetching posts {Start}-{End} from r/{Sub}...",
                 fetched + 1, fetched + batchSize, subreddit);
@@ -56,7 +57,7 @@ public sealed class CrawlerService : ICrawlerService
                 yield return (post, comments);
                 fetched++;
 
-                if (fetched >= _config.Limit) break;
+                if (fetched >= limit) break;
             }
 
             var lastPost = posts[^1];

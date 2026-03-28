@@ -112,7 +112,7 @@ try
     {
         logger.LogInformation("Crawling r/{Sub} via Arctic Shift API...", subreddit);
 
-        await foreach (var (post, comments) in crawler.CrawlAsync(subreddit, cts.Token))
+        await foreach (var (post, comments) in crawler.CrawlAsync(subreddit, config.Limit, cts.Token))
         {
             var chunks = transformer.Transform(post, comments)
                 .Where(c => config.MinScore == 0 || c.Metadata.Score >= config.MinScore);
