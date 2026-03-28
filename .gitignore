@@ -416,3 +416,14 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Output data
+output/
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
