@@ -1,0 +1,10 @@
+services:
+  crawler:
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+
+  web:
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully

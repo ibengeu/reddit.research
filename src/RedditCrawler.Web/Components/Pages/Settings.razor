@@ -1,0 +1,259 @@
+@page "/settings"
+@using RedditCrawler.Configuration
+@using RedditCrawler.Web.Services
+@inject OllamaConfig OllamaConfig
+@inject VectorConfig VectorConfig
+@inject RagConfig RagConfig
+@inject OpenRouterConfig OpenRouterConfig
+@inject ConnectionHealthService HealthService
+@inject SettingsPersistenceService Persistence
+@implements IDisposable
+
+<div class="flex-1 overflow-y-auto p-8 lg:p-12">
+    <div class="max-w-5xl mx-auto space-y-12">
+        <!-- Page Header -->
+        <div class="space-y-1">
+            <h1 class="text-2xl font-semibold text-zinc-900 tracking-tight">
+                System Settings
+            </h1>
+            <p class="text-sm text-zinc-500 font-medium">
+                Configure AI providers, vector database, and inference parameters. Changes apply immediately and are saved automatically.
+            </p>
+        </div>
+
+        <div class="p-4 bg-zinc-900 border border-zinc-800 rounded-xl flex items-start gap-3 shadow-lg">
+            <iconify-icon icon="lucide:info" class="text-zinc-400 text-lg mt-0.5"></iconify-icon>
+            <p class="text-xs text-zinc-400 leading-relaxed font-medium">
+                Settings are saved automatically and persist across restarts.
+                Infrastructure connection changes (host/port) may require a service restart.
+                @if (_saveConfirmation is not null)
+                {
+                    <span class="text-emerald-400 ml-2 font-semibold">@_saveConfirmation</span>
+                }
+            </p>
+        </div>
+
+        <!-- Chat Provider Selector -->
+        <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm space-y-6">
+            <h3 class="text-sm font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+                <iconify-icon icon="lucide:cpu" class="text-zinc-400"></iconify-icon>
+                Chat Provider
+            </h3>
+            <div class="grid grid-cols-2 gap-3">
+                <button @onclick="SelectOllama"
+                        class="flex flex-col items-start p-4 rounded-xl border-2 transition-all @(RagConfig.ChatProvider == ChatProvider.Ollama ? "border-zinc-900 bg-zinc-50" : "border-zinc-100 hover:border-zinc-300")">
+                    <div class="flex items-center gap-2 mb-1">
+                        <iconify-icon icon="lucide:server" class="@(RagConfig.ChatProvider == ChatProvider.Ollama ? "text-zinc-900" : "text-zinc-400")"></iconify-icon>
+                        <span class="text-sm font-semibold text-zinc-900">Ollama (Local)</span>
+                        @if (RagConfig.ChatProvider == ChatProvider.Ollama)
+                        {
+                            <span class="ml-auto text-[10px] font-bold text-zinc-900 bg-zinc-200 px-1.5 py-0.5 rounded">ACTIVE</span>
+                        }
+                    </div>
+                    <p class="text-xs text-zinc-400 font-medium">Free · Private · Slower on CPU</p>
+                </button>
+                <button @onclick="SelectOpenRouter"
+                        class="flex flex-col items-start p-4 rounded-xl border-2 transition-all @(RagConfig.ChatProvider == ChatProvider.OpenRouter ? "border-zinc-900 bg-zinc-50" : "border-zinc-100 hover:border-zinc-300")">
+                    <div class="flex items-center gap-2 mb-1">
+                        <iconify-icon icon="lucide:zap" class="@(RagConfig.ChatProvider == ChatProvider.OpenRouter ? "text-zinc-900" : "text-zinc-400")"></iconify-icon>
+                        <span class="text-sm font-semibold text-zinc-900">OpenRouter (Cloud)</span>
+                        @if (RagConfig.ChatProvider == ChatProvider.OpenRouter)
+                        {
+                            <span class="ml-auto text-[10px] font-bold text-zinc-900 bg-zinc-200 px-1.5 py-0.5 rounded">ACTIVE</span>
+                        }
+                    </div>
+                    <p class="text-xs text-zinc-400 font-medium">~$0.27/M tokens · 60–120 tok/s</p>
+                </button>
+            </div>
+
+            <!-- Active model display -->
+            <div class="space-y-1.5">
+                <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
+                    @(RagConfig.ChatProvider == ChatProvider.OpenRouter ? "OpenRouter Model" : "Ollama Chat Model")
+                </label>
+                @if (RagConfig.ChatProvider == ChatProvider.OpenRouter)
+                {
+                    <input @bind="OpenRouterConfig.Model" @bind:after="Save"
+                           class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium"
+                           placeholder="e.g. deepseek/deepseek-chat" />
+                    <p class="text-[10px] text-zinc-400 font-medium">
+                        Popular: deepseek/deepseek-chat · deepseek/deepseek-r1 · openai/gpt-4o-mini · anthropic/claude-haiku
+                    </p>
+                }
+                else
+                {
+                    <input @bind="RagConfig.ChatModel" @bind:after="Save"
+                           class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium"
+                           placeholder="e.g. llama3.2" />
+                }
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Top-K</label>
+                    <input type="number" @bind="RagConfig.TopK" @bind:after="Save" min="1" max="50"
+                           class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                </div>
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Retrieval Multiplier</label>
+                    <input type="number" @bind="RagConfig.RetrievalMultiplier" @bind:after="Save" min="1" max="10"
+                           class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                    <p class="text-[10px] text-zinc-400 font-medium">Fetches TopK × Multiplier candidates before reranking.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- OpenRouter Credentials (shown when OpenRouter active) -->
+        @if (RagConfig.ChatProvider == ChatProvider.OpenRouter)
+        {
+            <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm space-y-4">
+                <h3 class="text-sm font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+                    <iconify-icon icon="lucide:key" class="text-zinc-400"></iconify-icon>
+                    OpenRouter Credentials
+                </h3>
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">API Key</label>
+                    <input type="password" @bind="OpenRouterConfig.ApiKey" @bind:after="Save"
+                           class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium font-mono"
+                           placeholder="sk-or-..." />
+                    <p class="text-[10px] text-zinc-400 font-medium">Saved locally. Get yours at openrouter.ai/keys</p>
+                </div>
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Base URL</label>
+                    <input @bind="OpenRouterConfig.BaseUrl" @bind:after="Save"
+                           class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                </div>
+                @if (string.IsNullOrWhiteSpace(OpenRouterConfig.ApiKey))
+                {
+                    <div class="p-3 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-700 font-medium flex items-center gap-2">
+                        <iconify-icon icon="lucide:alert-triangle"></iconify-icon>
+                        API key required to use OpenRouter.
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Ollama Section -->
+            <div class="space-y-6">
+                <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm space-y-6">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+                            <iconify-icon icon="lucide:brain-circuit" class="text-zinc-400"></iconify-icon>
+                            Ollama Engine
+                        </h3>
+                        <div class="flex items-center gap-1.5 bg-zinc-50 px-2 py-1 rounded-md border border-zinc-100">
+                            <div class="w-1.5 h-1.5 rounded-full @GetStatusClass(HealthService.OllamaStatus)"></div>
+                            <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">@HealthService.OllamaStatusText</span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Base URL</label>
+                            <input @bind="OllamaConfig.BaseUrl" @bind:after="Save"
+                                   class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Embedding Model</label>
+                            <input @bind="OllamaConfig.Model" @bind:after="Save"
+                                   class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                        </div>
+                    </div>
+
+                    <button @onclick="() => HealthService.CheckAllAsync()" class="w-full py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs font-bold transition-colors">
+                        Test Connection
+                    </button>
+                </div>
+            </div>
+
+            <!-- PostgreSQL / pgvector Section -->
+            <div class="space-y-6">
+                <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm space-y-6">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+                            <iconify-icon icon="lucide:database" class="text-zinc-400"></iconify-icon>
+                            PostgreSQL + pgvector
+                        </h3>
+                        <div class="flex items-center gap-1.5 bg-zinc-50 px-2 py-1 rounded-md border border-zinc-100">
+                            <div class="w-1.5 h-1.5 rounded-full @GetStatusClass(HealthService.VectorStatus)"></div>
+                            <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">@HealthService.VectorStatusText</span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Connection String</label>
+                            <input @bind="VectorConfig.ConnectionString" @bind:after="Save"
+                                   class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium font-mono" />
+                            <p class="text-[10px] text-zinc-400 font-medium">Host=…;Port=5432;Database=…;Username=…;Password=…</p>
+                        </div>
+                        <div class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Table Name</label>
+                            <input @bind="VectorConfig.TableName" @bind:after="Save"
+                                   class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                        </div>
+                    </div>
+
+                    <button @onclick="() => HealthService.CheckAllAsync()" class="w-full py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-lg text-xs font-bold transition-colors">
+                        Test Connection
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? _saveConfirmation;
+    private System.Timers.Timer? _confirmationTimer;
+
+    protected override void OnInitialized()
+    {
+        HealthService.OnHealthChanged -= StateHasChanged;
+        HealthService.OnHealthChanged += StateHasChanged;
+    }
+
+    private void SelectOllama()
+    {
+        RagConfig.ChatProvider = ChatProvider.Ollama;
+        Save();
+    }
+
+    private void SelectOpenRouter()
+    {
+        RagConfig.ChatProvider = ChatProvider.OpenRouter;
+        OpenRouterConfig.Enabled = true;
+        Save();
+    }
+
+    private void Save()
+    {
+        Persistence.ScheduleSave();
+        _saveConfirmation = "Saved";
+        _confirmationTimer?.Stop();
+        _confirmationTimer?.Dispose();
+        _confirmationTimer = new System.Timers.Timer(2000);
+        _confirmationTimer.Elapsed += (_, _) =>
+        {
+            _saveConfirmation = null;
+            InvokeAsync(StateHasChanged);
+            _confirmationTimer?.Dispose();
+        };
+        _confirmationTimer.AutoReset = false;
+        _confirmationTimer.Start();
+    }
+
+    private string GetStatusClass(string status) => status.ToLower() switch
+    {
+        "ok" => "bg-zinc-900",
+        "error" => "bg-red-500",
+        _ => "bg-zinc-300"
+    };
+
+    public void Dispose()
+    {
+        HealthService.OnHealthChanged -= StateHasChanged;
+        _confirmationTimer?.Dispose();
+    }
+}

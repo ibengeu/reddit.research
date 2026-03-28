@@ -1,0 +1,480 @@
+@page "/ask"
+@using Microsoft.JSInterop
+@using Markdig
+@using RedditCrawler.Services
+@using RedditCrawler.Configuration
+@using RedditCrawler.Models
+@inject IChatService ChatService
+@inject IVectorStoreService VectorStore
+@inject RagConfig RagConfig
+@inject OpenRouterConfig OpenRouterConfig
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="flex h-full overflow-hidden bg-white">
+
+    <!-- ── Chat column ──────────────────────────────────────────────── -->
+    <div class="flex-1 flex flex-col min-w-0 relative">
+
+        <!-- Top bar -->
+        <div class="h-12 flex items-center justify-end px-5 shrink-0 border-b border-zinc-100">
+            <div class="flex items-center gap-2">
+                <!-- Parameters toggle -->
+                <div class="relative">
+                    <button @onclick="ToggleParams"
+                            class="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:border-zinc-300 transition-colors">
+                        <iconify-icon icon="solar:tuning-2-outline" class="text-sm"></iconify-icon>
+                        Parameters
+                    </button>
+
+                    @if (_showParams)
+                    {
+                        <div class="absolute right-0 top-9 z-30 w-56 bg-white border border-zinc-200 rounded-xl shadow-lg p-4 space-y-3">
+                            <p class="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest">Retrieval</p>
+                            <div class="space-y-2">
+                                <div class="flex items-center justify-between">
+                                    <label class="text-xs text-zinc-600 font-medium">Top-K</label>
+                                    <span class="text-xs font-semibold text-zinc-900 w-6 text-right">@TopK</span>
+                                </div>
+                                <input type="range" min="1" max="50" @bind="TopK" @bind:event="oninput"
+                                       class="w-full accent-zinc-900" aria-label="Top-K retrieval count" />
+                                <p class="text-[10px] text-zinc-400">Number of chunks retrieved per query</p>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <button @onclick="ClearChat"
+                        class="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-zinc-200 text-zinc-500 hover:text-red-600 hover:border-red-200 transition-colors">
+                    <iconify-icon icon="solar:trash-bin-minimalistic-outline" class="text-sm"></iconify-icon>
+                    Clear
+                </button>
+            </div>
+        </div>
+
+        <!-- No-data notice -->
+        @if (_stats is not null && _stats.TotalChunks == 0)
+        {
+            <div class="mx-5 mt-4 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center gap-2.5 shrink-0">
+                <iconify-icon icon="solar:danger-triangle-outline" class="text-amber-500 text-lg shrink-0"></iconify-icon>
+                <p class="text-xs text-amber-700 font-medium">
+                    Knowledge base is empty.
+                    <a href="/crawl" class="underline font-semibold hover:text-amber-900">Start an ingestion job</a> first.
+                </p>
+            </div>
+        }
+
+        <!-- Messages -->
+        <div class="flex-1 overflow-y-auto px-5 py-6 space-y-6" id="chat-container">
+
+            @if (_messages.Count == 0 && !IsLoading)
+            {
+                <div class="flex flex-col items-center justify-center h-full text-center pb-16 select-none">
+                    <div class="w-11 h-11 rounded-2xl bg-zinc-100 flex items-center justify-center mb-4">
+                        <iconify-icon icon="solar:stars-outline" class="text-2xl text-zinc-400"></iconify-icon>
+                    </div>
+                    <h2 class="text-sm font-semibold text-zinc-900 mb-1">Ask your knowledge base</h2>
+                    <p class="text-xs text-zinc-400 mb-6 max-w-xs leading-relaxed">
+                        Questions are answered using your indexed Reddit content via semantic search.
+                    </p>
+                    <div class="flex flex-col gap-2 w-full max-w-sm">
+                        @foreach (var prompt in _examplePrompts)
+                        {
+                            <button @onclick="() => UseExamplePrompt(prompt)"
+                                    class="text-left text-xs text-zinc-600 px-4 py-2.5 rounded-lg border border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50 transition-all font-medium">
+                                @prompt
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+
+            @foreach (var msg in _messages)
+            {
+                @if (msg.IsUser)
+                {
+                    <div class="flex justify-end">
+                        <div class="max-w-[72%]">
+                            <div class="bg-zinc-100 text-zinc-900 rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed font-medium">
+                                @msg.Content
+                            </div>
+                            <p class="text-[10px] text-zinc-400 font-medium mt-1 text-right pr-1">
+                                @msg.Timestamp.ToLocalTime().ToString("h:mm tt")
+                            </p>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="flex items-start gap-3">
+                        <div class="w-7 h-7 rounded-full bg-zinc-900 flex items-center justify-center shrink-0 mt-0.5">
+                            <iconify-icon icon="solar:stars-minimalistic-outline" class="text-white text-xs"></iconify-icon>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-1.5">
+                                <span class="text-xs font-semibold text-zinc-900">Assistant</span>
+                                @if (msg.ProcessingTime.HasValue)
+                                {
+                                    <span class="text-[10px] text-zinc-400 font-medium flex items-center gap-1">
+                                        <iconify-icon icon="solar:bolt-outline" class="text-[10px]"></iconify-icon>
+                                        @(msg.ProcessingTime.Value.TotalSeconds.ToString("F1"))s
+                                    </span>
+                                }
+                            </div>
+                            <div class="prose prose-sm prose-zinc max-w-none">
+                                @((MarkupString)msg.FormattedContent)
+                                @if (IsLoading && msg == _messages[^1] && !msg.IsUser)
+                                {
+                                    <span class="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse align-middle"></span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+
+            @if (IsLoading && (_messages.Count == 0 || _messages[^1].IsUser || string.IsNullOrEmpty(_messages[^1].Content)))
+            {
+                <div class="flex items-start gap-3">
+                    <div class="w-7 h-7 rounded-full bg-zinc-900 flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
+                        <iconify-icon icon="solar:stars-minimalistic-outline" class="text-white text-xs"></iconify-icon>
+                    </div>
+                    <div class="flex-1 space-y-2 pt-1">
+                        <div class="h-3.5 bg-zinc-100 rounded-full animate-pulse w-3/4"></div>
+                        <div class="h-3.5 bg-zinc-100 rounded-full animate-pulse w-1/2"></div>
+                        <div class="h-3.5 bg-zinc-100 rounded-full animate-pulse w-5/8"></div>
+                    </div>
+                </div>
+            }
+
+            @if (Error is not null)
+            {
+                <div class="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-xs font-medium">
+                    <iconify-icon icon="solar:danger-circle-outline" class="text-base shrink-0"></iconify-icon>
+                    @Error
+                </div>
+            }
+        </div>
+
+        <!-- Floating input with gradient fade -->
+        <div class="relative shrink-0">
+            <!-- Gradient fade over last messages -->
+            <div class="absolute -top-12 left-0 right-0 h-12 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
+
+            <div class="px-5 pb-5 pt-2 bg-white">
+                <div class="relative flex items-end gap-2 bg-white border border-zinc-200 rounded-2xl px-3 py-2.5 shadow-sm focus-within:border-zinc-400 focus-within:ring-1 focus-within:ring-zinc-200 transition-all">
+
+                    <textarea @bind="Question" @bind:event="oninput" @onkeydown="HandleKeyDown"
+                              rows="1" placeholder="Ask a question about your indexed data…"
+                              class="flex-1 bg-transparent resize-none text-sm text-zinc-900 focus:outline-none focus:ring-0 border-none min-h-[36px] max-h-[140px] placeholder:text-zinc-400 font-medium py-0.5 leading-relaxed"
+                              disabled="@IsLoading"></textarea>
+
+                    @if (IsLoading)
+                    {
+                        <button @onclick="StopGeneration"
+                                class="w-8 h-8 flex items-center justify-center rounded-xl bg-red-500 hover:bg-red-600 text-white transition-colors shrink-0"
+                                aria-label="Stop generation">
+                            <iconify-icon icon="solar:stop-outline" class="text-sm"></iconify-icon>
+                        </button>
+                    }
+                    else
+                    {
+                        <button @onclick="AskQuestion"
+                                disabled="@(string.IsNullOrWhiteSpace(Question))"
+                                class="w-8 h-8 flex items-center justify-center rounded-xl bg-zinc-900 hover:bg-zinc-700 text-white transition-colors shrink-0 disabled:bg-zinc-200 disabled:text-zinc-400"
+                                aria-label="Send">
+                            <iconify-icon icon="solar:arrow-up-outline" class="text-sm"></iconify-icon>
+                        </button>
+                    }
+                </div>
+                <p class="text-[10px] text-zinc-400 font-medium mt-1.5 text-right pr-1">Shift + Return for new line</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Sources panel ─────────────────────────────────────────────── -->
+    <div class="w-80 lg:w-96 flex-shrink-0 border-l border-zinc-100 flex flex-col bg-zinc-50 hidden lg:flex">
+        <div class="h-12 flex items-center justify-between px-4 shrink-0 border-b border-zinc-100">
+            <span class="text-xs font-semibold text-zinc-500">Retrieved Sources</span>
+            <span class="text-[10px] font-semibold text-zinc-500 bg-white px-2 py-0.5 rounded-md border border-zinc-200">
+                @_sources.Count
+            </span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-3 space-y-2.5">
+            @if (_sources.Count == 0 && !IsLoading)
+            {
+                <div class="flex flex-col items-center justify-center h-full text-center pb-10 select-none">
+                    <iconify-icon icon="solar:database-outline" class="text-3xl text-zinc-200 mb-2"></iconify-icon>
+                    <p class="text-[11px] text-zinc-400 font-medium">No sources retrieved yet</p>
+                </div>
+            }
+
+            @for (int i = 0; i < _sources.Count; i++)
+            {
+                var s = _sources[i];
+                var idx = i + 1;
+                <div @onclick="() => s.IsExpanded = !s.IsExpanded"
+                     class="relative bg-white border border-zinc-200/80 rounded-xl p-3.5 hover:border-zinc-300 hover:shadow-sm transition-all cursor-pointer">
+
+                    <!-- Index badge -->
+                    <div class="absolute -top-2 -left-2 w-5 h-5 bg-zinc-900 text-white text-xs font-bold rounded-full flex items-center justify-center ring-2 ring-zinc-50">
+                        @idx
+                    </div>
+
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-1.5">
+                            <div class="w-5 h-5 rounded bg-orange-100 flex items-center justify-center">
+                                <iconify-icon icon="solar:chat-dots-outline" class="text-orange-500 text-xs"></iconify-icon>
+                            </div>
+                            <span class="text-xs font-semibold text-zinc-700 truncate max-w-24">r/@s.Subreddit</span>
+                            <span class="text-zinc-300">·</span>
+                            <span class="text-xs text-zinc-500 font-medium">@s.RedditScore pts</span>
+                        </div>
+                        <span class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                            @s.SimilarityScore.ToString("F2")
+                        </span>
+                    </div>
+
+                    <div class="prose prose-zinc max-w-none text-zinc-500 @(s.IsExpanded ? "" : "line-clamp-4")"
+                         style="font-size: 0.7rem; line-height: 1.4;">
+                        @((MarkupString)s.FormattedContent)
+                    </div>
+
+                    @if (s.Content.Length > 180)
+                    {
+                        <p class="text-zinc-400 mt-1.5 font-medium" style="font-size: 0.65rem;">
+                            @(s.IsExpanded ? "Collapse" : "Expand")
+                        </p>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+</div>
+
+@code {
+    private string? Question { get; set; }
+    private int TopK { get; set; } = 5;
+    private string? Error { get; set; }
+    private bool IsLoading { get; set; }
+    private bool _showParams;
+
+    private string ModelLabel => RagConfig.ChatProvider == ChatProvider.OpenRouter
+        ? OpenRouterConfig.Model
+        : RagConfig.ChatModel;
+
+    private string ProviderLabel => RagConfig.ChatProvider == ChatProvider.OpenRouter
+        ? "OpenRouter"
+        : "Ollama";
+
+    private static readonly string[] _examplePrompts =
+    [
+        "What are the most discussed topics?",
+        "Summarize the general sentiment across threads",
+        "What advice comes up most frequently?"
+    ];
+
+    private VectorStoreStats? _stats;
+    private List<ChatMessage> _messages = new();
+    private List<SourceInfo> _sources = new();
+    private int _tokensSinceRender;
+    private const int RenderBatchSize = 5;
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stats = await VectorStore.GetStatsAsync();
+        TopK = RagConfig.TopK;
+    }
+
+    private void ToggleParams() => _showParams = !_showParams;
+
+    private async Task UseExamplePrompt(string prompt)
+    {
+        Question = prompt;
+        await AskQuestion();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey && !IsLoading)
+        {
+            await Task.Yield();
+            await AskQuestion();
+        }
+    }
+
+    private async Task AskQuestion()
+    {
+        if (string.IsNullOrWhiteSpace(Question) || IsLoading) return;
+
+        _showParams = false;
+        var userQuestion = Question;
+        Question = string.Empty;
+        IsLoading = true;
+        Error = null;
+        _sources.Clear();
+
+        _messages.Add(new ChatMessage(userQuestion, true));
+        await InvokeAsync(StateHasChanged);
+        await ScrollToBottom();
+
+        var assistantMsg = new ChatMessage("", false);
+        _messages.Add(assistantMsg);
+
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        var startTime = DateTimeOffset.UtcNow;
+        _tokensSinceRender = 0;
+        try
+        {
+            var history = _messages
+                .Where(m => m != assistantMsg && !string.IsNullOrEmpty(m.Content))
+                .Select(m => new ChatTurn(m.IsUser ? ChatTurn.User : ChatTurn.Assistant, m.Content))
+                .ToList();
+
+            await foreach (var token in ChatService.AskStreamAsync(userQuestion, TopK, history, ct))
+            {
+                if (token.StartsWith(ChatStreamTokens.SourcesSentinel))
+                {
+                    var sourcesBlock = token[ChatStreamTokens.SourcesSentinel.Length..];
+                    assistantMsg.Sources = ParseSources(sourcesBlock);
+                    _sources = assistantMsg.Sources;
+                    assistantMsg.ProcessingTime = DateTimeOffset.UtcNow - startTime;
+                    await InvokeAsync(StateHasChanged);
+                }
+                else if (token.StartsWith(ChatStreamTokens.ErrorSentinel))
+                {
+                    var errorMsg = token[ChatStreamTokens.ErrorSentinel.Length..];
+                    _messages.Remove(assistantMsg);
+                    Error = errorMsg;
+                    await InvokeAsync(StateHasChanged);
+                }
+                else
+                {
+                    assistantMsg.AppendToken(token);
+                    _tokensSinceRender++;
+                }
+
+                if (_tokensSinceRender >= RenderBatchSize)
+                {
+                    _tokensSinceRender = 0;
+                    await InvokeAsync(StateHasChanged);
+                    await ScrollToBottom();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            if (string.IsNullOrEmpty(assistantMsg.Content))
+                _messages.Remove(assistantMsg);
+        }
+        catch (Exception ex)
+        {
+            Error = $"Failed: {ex.Message}";
+            if (string.IsNullOrEmpty(assistantMsg.Content))
+                _messages.Remove(assistantMsg);
+        }
+        finally
+        {
+            IsLoading = false;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToBottom();
+        }
+    }
+
+    private static List<SourceInfo> ParseSources(string sourcesJson)
+    {
+        try
+        {
+            var payloads = System.Text.Json.JsonSerializer.Deserialize<List<RedditCrawler.Services.OllamaChatService.SourcePayload>>(sourcesJson);
+            if (payloads is null) return [];
+            return payloads.Select(p => new SourceInfo
+            {
+                Subreddit = p.Subreddit,
+                RedditScore = p.RedditScore,
+                SimilarityScore = p.SimilarityScore,
+                Content = p.Content
+            }).ToList();
+        }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+
+    private void StopGeneration()
+    {
+        _cts?.Cancel();
+        IsLoading = false;
+    }
+
+    private void ClearChat()
+    {
+        _cts?.Cancel();
+        _messages.Clear();
+        _sources.Clear();
+        Error = null;
+        IsLoading = false;
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try { await JS.InvokeVoidAsync("blazorScrollToBottom", "chat-container"); }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private class ChatMessage
+    {
+        private readonly System.Text.StringBuilder _sb;
+
+        public bool IsUser { get; }
+        public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
+        public TimeSpan? ProcessingTime { get; set; }
+        public string Content => _sb.ToString();
+
+        // OWASP A07:2025 – Markdig sanitizes HTML before rendering to prevent XSS from LLM output
+        private static readonly MarkdownPipeline _pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .DisableHtml()
+            .Build();
+
+        public string FormattedContent => Markdown.ToHtml(Content, _pipeline);
+
+        public ChatMessage(string content, bool isUser, TimeSpan? processingTime = null)
+        {
+            _sb = new System.Text.StringBuilder(content);
+            IsUser = isUser;
+            ProcessingTime = processingTime;
+        }
+
+        public List<SourceInfo> Sources { get; set; } = [];
+        public void AppendToken(string token) => _sb.Append(token);
+    }
+
+    private class SourceInfo
+    {
+        public string Subreddit { get; set; } = string.Empty;
+        public int RedditScore { get; set; }
+        public float SimilarityScore { get; set; }
+        public string Content { get; set; } = string.Empty;
+        public bool IsExpanded { get; set; }
+
+        // OWASP A07:2025 – DisableHtml prevents XSS from raw Reddit content
+        private static readonly MarkdownPipeline _pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .DisableHtml()
+            .Build();
+
+        public string FormattedContent => Markdown.ToHtml(Content, _pipeline);
+    }
+}

@@ -1,0 +1,139 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    hostname: ollama
+    ports:
+      - "127.0.0.1:11435:11434"
+    volumes:
+      - ollama-shared:/root/.ollama
+    networks:
+      - reddit-net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    command: ["pull", "nomic-embed-text"]
+    environment:
+      OLLAMA_HOST: ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - reddit-net
+    restart: "no"
+
+  # Pull llama3.2 first (2 GB) — fast fallback so Ask works quickly
+  ollama-pull-chat:
+    image: ollama/ollama:latest
+    command: ["pull", "llama3.2"]
+    environment:
+      OLLAMA_HOST: ollama:11434
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    networks:
+      - reddit-net
+    restart: "no"
+
+  # Pull llama3 (4.7 GB) in background after llama3.2 is ready
+  ollama-pull-chat-full:
+    image: ollama/ollama:latest
+    command: ["pull", "llama3"]
+    environment:
+      OLLAMA_HOST: ollama:11434
+    depends_on:
+      ollama-pull-chat:
+        condition: service_completed_successfully
+    networks:
+      - reddit-net
+    restart: "no"
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    hostname: postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: reddit
+      POSTGRES_USER: reddit
+      POSTGRES_PASSWORD: reddit
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - reddit-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reddit -d reddit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  crawler:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./output:/app/output
+    command:
+      - "--subreddit"
+      - "${SUBREDDIT:-ResumesATS}"
+      - "--limit"
+      - "${LIMIT:-100}"
+      - "--sort"
+      - "${SORT:-desc}"
+      - "--embed"
+      - "--ollama-url"
+      - "http://ollama:11434"
+      - "--pg-connection"
+      - "Host=postgres;Port=5432;Database=reddit;Username=reddit;Password=reddit"
+      - "--output"
+      - "/app/output"
+    networks:
+      - reddit-net
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      Ollama__Enabled: "true"
+      Ollama__BaseUrl: http://ollama:11434
+      Ollama__Model: nomic-embed-text
+      Vector__Enabled: "true"
+      Vector__ConnectionString: "Host=postgres;Port=5432;Database=reddit;Username=reddit;Password=reddit"
+      Rag__ChatModel: llama3.2
+      Rag__ChatProvider: "${CHAT_PROVIDER:-Ollama}"
+      Rag__TopK: "${RAG_TOP_K:-5}"
+      Rag__RetrievalMultiplier: "${RAG_RETRIEVAL_MULTIPLIER:-3}"
+      # To use OpenRouter: set CHAT_PROVIDER=OpenRouter and OPENROUTER_API_KEY in your .env
+      OpenRouter__Enabled: "${OPENROUTER_ENABLED:-false}"
+      OpenRouter__ApiKey: "${OPENROUTER_API_KEY:-}"
+      OpenRouter__BaseUrl: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      OpenRouter__Model: "${OPENROUTER_MODEL:-deepseek/deepseek-chat}"
+      Crawler__OutputPath: /app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./output:/app/output
+      - web-settings:/app/persist  # persists appsettings.user.json written by SettingsPersistenceService
+    networks:
+      - reddit-net
+
+volumes:
+  ollama-shared:
+    external: true
+  postgres-data:
+  web-settings:
+
+networks:
+  reddit-net:
+    driver: bridge

@@ -1,0 +1,152 @@
+@page "/library"
+@using RedditCrawler.Models
+@using RedditCrawler.Services
+@inject IVectorStoreService VectorStore
+
+<div class="flex-1 overflow-y-auto p-8 lg:p-12">
+    <div class="max-w-5xl mx-auto space-y-12">
+        <!-- Page Header -->
+        <div class="space-y-1">
+            <h1 class="text-2xl font-semibold text-zinc-900 tracking-tight">
+                Knowledge Base Library
+            </h1>
+            <p class="text-sm text-zinc-500 font-medium">
+                Overview of all indexed content and data distributions across your research corpus.
+            </p>
+        </div>
+
+        @if (!VectorStore.IsEnabled)
+        {
+            <div class="p-6 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 flex flex-col items-center justify-center text-center space-y-3">
+                <iconify-icon icon="lucide:database-zap" class="text-3xl text-zinc-300"></iconify-icon>
+                <div>
+                    <h3 class="text-sm font-semibold text-zinc-900">Vector Store Disabled</h3>
+                    <p class="text-xs text-zinc-500 max-w-xs mx-auto">Vector store is not enabled. Please check your settings to enable storage capabilities.</p>
+                </div>
+            </div>
+        }
+        else if (_loading)
+        {
+            <div class="flex flex-col items-center justify-center py-20 space-y-4">
+                <iconify-icon icon="lucide:loader-2" class="animate-spin text-3xl text-zinc-300"></iconify-icon>
+                <p class="text-xs font-bold text-zinc-400 uppercase tracking-widest">Analyzing Collection...</p>
+            </div>
+        }
+        else if (_error is not null)
+        {
+            <div class="p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">
+                <iconify-icon icon="lucide:alert-circle" class="mr-2"></iconify-icon>
+                @_error
+            </div>
+        }
+        else if (_stats is not null)
+        {
+            <!-- Metrics -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm flex flex-col justify-between hover:border-zinc-300 transition-colors">
+                    <h3 class="text-xs text-zinc-500 mb-3 font-semibold uppercase tracking-wider">Total Vector Chunks</h3>
+                    <p class="text-3xl font-semibold tracking-tight text-zinc-900">@_stats.TotalChunks.ToString("N0")</p>
+                </div>
+                <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm flex flex-col justify-between hover:border-zinc-300 transition-colors">
+                    <h3 class="text-xs text-zinc-500 mb-3 font-semibold uppercase tracking-wider">Active Subreddits</h3>
+                    <p class="text-3xl font-semibold tracking-tight text-zinc-900">@_stats.Subreddits.Count</p>
+                </div>
+            </div>
+
+            <div class="space-y-4">
+                <div class="flex items-center justify-between px-2">
+                    <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Indexed Subreddits</h3>
+                    <button @onclick="LoadStats" class="text-xs font-bold text-zinc-400 hover:text-zinc-900 transition-colors flex items-center gap-1.5 uppercase tracking-widest">
+                        <iconify-icon icon="lucide:refresh-cw" class="text-xs"></iconify-icon>
+                        Refresh Stats
+                    </button>
+                </div>
+
+                @if (_stats.Subreddits.Count > 0)
+                {
+                    <div class="overflow-hidden rounded-xl border border-zinc-200/60 bg-white shadow-sm">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-zinc-50/50 border-b border-zinc-100">
+                                    <th class="px-6 py-4 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Subreddit</th>
+                                    <th class="px-6 py-4 text-[11px] font-bold text-zinc-400 uppercase tracking-wider text-right">Chunk Count</th>
+                                    <th class="px-6 py-4 text-[11px] font-bold text-zinc-400 uppercase tracking-wider text-right">Percentage</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-zinc-100">
+                                @foreach (var sub in _stats.Subreddits)
+                                {
+                                    <tr class="hover:bg-zinc-50/30 transition-colors group">
+                                        <td class="px-6 py-4">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-8 h-8 rounded bg-zinc-100 text-zinc-600 flex items-center justify-center text-xs font-bold">
+                                                    r/
+                                                </div>
+                                                <span class="text-sm font-semibold text-zinc-900">@sub.Name</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <span class="text-sm font-medium text-zinc-600">@sub.ChunkCount.ToString("N0")</span>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            @{
+                                                var pct = (double)sub.ChunkCount / _stats.TotalChunks * 100;
+                                            }
+                                            <div class="flex items-center justify-end gap-3">
+                                                <div class="w-24 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                                                    <div class="h-full bg-zinc-900 rounded-full" style="width: @(pct)%"></div>
+                                                </div>
+                                                <span class="text-xs font-bold text-zinc-400 w-10">@pct.ToString("F1")%</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="p-12 border-2 border-dashed border-zinc-100 rounded-2xl flex flex-col items-center justify-center text-center space-y-4">
+                        <div class="w-16 h-16 rounded-full bg-zinc-50 flex items-center justify-center">
+                            <iconify-icon icon="lucide:library" class="text-3xl text-zinc-200"></iconify-icon>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-zinc-900">Your library is empty</h3>
+                            <p class="text-xs text-zinc-400 max-w-[240px] mx-auto mt-1">Start by crawling some subreddits to populate your research knowledge base.</p>
+                        </div>
+                        <a href="/crawl" class="px-4 py-2 bg-zinc-900 text-white rounded-lg text-xs font-bold hover:bg-zinc-800 transition-colors">Start Ingestion Job</a>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private VectorStoreStats? _stats;
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await LoadStats();
+
+    private async Task LoadStats()
+    {
+        _loading = true;
+        _error = null;
+        _stats = null;
+
+        try
+        {
+            _stats = await VectorStore.GetStatsAsync();
+        }
+        catch (Exception)
+        {
+            _error = "Failed to load stats. Check that PostgreSQL is running.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
