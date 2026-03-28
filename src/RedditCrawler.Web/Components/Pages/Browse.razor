@@ -1,0 +1,181 @@
+@page "/browse"
+@using RedditCrawler.Services
+@inject IEmbeddingService EmbeddingService
+@inject IVectorStoreService VectorStore
+
+<div class="flex-1 overflow-y-auto p-8 lg:p-12">
+    <div class="max-w-5xl mx-auto space-y-12">
+        <!-- Page Header -->
+        <div class="space-y-1">
+            <h1 class="text-2xl font-semibold text-zinc-900 tracking-tight">
+                Document Search
+            </h1>
+            <p class="text-sm text-zinc-500 font-medium">
+                Explore and analyze individual knowledge chunks stored in your vector database.
+            </p>
+        </div>
+
+        @if (!VectorStore.IsEnabled)
+        {
+            <div class="p-6 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 flex flex-col items-center justify-center text-center space-y-3">
+                <iconify-icon icon="lucide:database-zap" class="text-3xl text-zinc-300"></iconify-icon>
+                <div>
+                    <h3 class="text-sm font-semibold text-zinc-900">Vector Store Disabled</h3>
+                    <p class="text-xs text-zinc-500 max-w-xs mx-auto">Vector store is not enabled. Please check your settings to enable semantic search capabilities.</p>
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Search Bar -->
+            <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm space-y-6">
+                <div class="flex flex-col md:flex-row gap-6 items-end">
+                    <div class="flex-1 space-y-2">
+                        <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Semantic Query</label>
+                        <div class="relative">
+                            <iconify-icon icon="lucide:search" class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"></iconify-icon>
+                            <input @bind="SearchQuery" @bind:event="oninput" @onkeydown="HandleKeyDown" disabled="@IsLoading"
+                                   class="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium"
+                                   placeholder="Type to search stored knowledge chunks..." />
+                        </div>
+                    </div>
+                    
+                    <div class="w-full md:w-48 space-y-2">
+                        <div class="flex justify-between items-center">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Top-K</label>
+                            <span class="text-xs font-semibold text-zinc-900">@ResultCount</span>
+                        </div>
+                        <input type="range" min="1" max="50" @bind="ResultCount" disabled="@IsLoading" 
+                               class="w-full accent-zinc-900" />
+                    </div>
+
+                    <button @onclick="Search" disabled="@(IsLoading || string.IsNullOrWhiteSpace(SearchQuery))"
+                            class="px-6 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 disabled:bg-zinc-200 disabled:text-zinc-400 h-[42px]">
+                        @if (IsLoading) { <iconify-icon icon="lucide:loader-2" class="animate-spin text-sm"></iconify-icon> }
+                        else { <iconify-icon icon="lucide:sparkles" class="text-sm"></iconify-icon> }
+                        @(IsLoading ? "Searching" : "Search")
+                    </button>
+                </div>
+            </div>
+
+            @if (Error is not null)
+            {
+                <div class="p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">
+                    <iconify-icon icon="lucide:alert-circle" class="mr-2"></iconify-icon>
+                    @Error
+                </div>
+            }
+
+            @if (Results is not null)
+            {
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between px-2">
+                        <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Found @Results.Count chunks</h3>
+                    </div>
+
+                    @if (Results.Count == 0)
+                    {
+                        <div class="p-8 border-2 border-dashed border-zinc-100 rounded-2xl flex flex-col items-center justify-center text-center space-y-3">
+                            <iconify-icon icon="lucide:search-x" class="text-3xl text-zinc-200"></iconify-icon>
+                            <div>
+                                <h3 class="text-sm font-semibold text-zinc-900">No results found</h3>
+                                <p class="text-xs text-zinc-400 mt-1">Try a different query or adjust your search terms.</p>
+                            </div>
+                        </div>
+                    }
+
+                    <div class="grid grid-cols-1 gap-4">
+                        @foreach (var chunk in Results)
+                        {
+                            <div class="p-5 rounded-xl border border-zinc-200/60 bg-white hover:border-zinc-300 transition-all shadow-sm group">
+                                <div class="flex items-start justify-between mb-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="p-1.5 rounded bg-zinc-100 text-zinc-600">
+                                            <iconify-icon icon="lucide:message-square" class="text-sm"></iconify-icon>
+                                        </div>
+                                        <div class="flex flex-col">
+                                            <span class="text-sm font-semibold text-zinc-900">r/@chunk.Subreddit</span>
+                                            <div class="flex items-center gap-2 text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+                                                <span>Score: @chunk.RedditScore</span>
+                                                <span class="text-zinc-200">•</span>
+                                                <span>@TimestampFormatter.FormatDate(chunk.Timestamp)</span>
+                                                @if (chunk.Flair is not null)
+                                                {
+                                                    <span class="text-zinc-200">•</span>
+                                                    <span class="text-zinc-500">@chunk.Flair</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-1.5 px-2 py-1 rounded-md @GetScoreBg(chunk.SimilarityScore) border border-zinc-200/50">
+                                        <iconify-icon icon="lucide:target" class="text-xs @GetScoreText(chunk.SimilarityScore)"></iconify-icon>
+                                        <span class="text-[10px] font-bold @GetScoreText(chunk.SimilarityScore)">@chunk.SimilarityScore.ToString("F3")</span>
+                                    </div>
+                                </div>
+                                <div class="text-sm text-zinc-600 leading-relaxed font-medium line-clamp-3 group-hover:line-clamp-none transition-all">
+                                    @chunk.Content
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private string? SearchQuery { get; set; }
+    private int ResultCount { get; set; } = 10;
+    private List<RedditCrawler.Models.ScoredChunk>? Results { get; set; }
+    private string? Error { get; set; }
+    private bool IsLoading { get; set; }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Search();
+    }
+
+    private async Task Search()
+    {
+        if (string.IsNullOrWhiteSpace(SearchQuery)) return;
+
+        IsLoading = true;
+        Error = null;
+        Results = null;
+
+        try
+        {
+            var embedding = await EmbeddingService.GenerateEmbeddingAsync(SearchQuery);
+            if (embedding is null)
+            {
+                Error = "Could not generate embedding. Ensure Ollama is running.";
+                return;
+            }
+
+            Results = await VectorStore.SearchAsync(embedding, ResultCount);
+        }
+        catch (Exception)
+        {
+            Error = "Search failed. Check that Ollama and PostgreSQL are running, then try again.";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private string GetScoreBg(float score) => score switch
+    {
+        >= 0.80f => "bg-emerald-50",
+        >= 0.60f => "bg-zinc-50",
+        _ => "bg-red-50"
+    };
+
+    private string GetScoreText(float score) => score switch
+    {
+        >= 0.80f => "text-emerald-700",
+        >= 0.60f => "text-zinc-700",
+        _ => "text-red-700"
+    };
+}

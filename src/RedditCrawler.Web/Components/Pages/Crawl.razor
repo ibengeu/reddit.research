@@ -1,0 +1,242 @@
+@page "/"
+@page "/crawl"
+@using RedditCrawler.Web.Services
+@inject CrawlOrchestrator Orchestrator
+@inject ConnectionHealthService HealthService
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="flex-1 overflow-y-auto p-8 lg:p-12">
+    <div class="max-w-5xl mx-auto space-y-12">
+        <!-- Page Header -->
+        <div class="space-y-1">
+            <h1 class="text-2xl font-semibold text-zinc-900 tracking-tight">
+                Ingestion Jobs
+            </h1>
+            <p class="text-sm text-zinc-500 font-medium">
+                Configure and monitor data pipelines to populate your vector storage from Reddit subreddits.
+            </p>
+        </div>
+
+        @if (HealthService.OllamaStatus == "error" || HealthService.VectorStatus == "error")
+        {
+            <div class="p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3">
+                <iconify-icon icon="lucide:alert-triangle" class="text-red-600 text-xl mt-0.5"></iconify-icon>
+                <div class="space-y-1">
+                    <h4 class="text-sm font-semibold text-red-900 tracking-tight">System Degradation</h4>
+                    <p class="text-xs text-red-700 leading-relaxed font-medium">
+                        @if (HealthService.OllamaStatus == "error") { <span>Ollama is offline. Embeddings will not be generated. </span> }
+                        @if (HealthService.VectorStatus == "error") { <span>PostgreSQL is unreachable. Chunks will not be stored in the vector database.</span> }
+                    </p>
+                </div>
+            </div>
+        }
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Configuration Card -->
+            <div class="lg:col-span-1 space-y-6">
+                <div class="p-6 rounded-xl border border-zinc-200/60 bg-white shadow-sm space-y-6">
+                    <h3 class="text-sm font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+                        <iconify-icon icon="lucide:settings-2" class="text-zinc-400"></iconify-icon>
+                        Job Configuration
+                    </h3>
+
+                    <div class="space-y-4">
+                        <div class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Subreddits</label>
+                            <input @bind="SubredditsInput" disabled="@Orchestrator.IsRunning" 
+                                   class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium"
+                                   placeholder="e.g. ResumesATS, csharp" />
+                            <p class="text-[10px] text-zinc-400 font-medium">Comma-separated subreddit names.</p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-1.5">
+                                <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Limit</label>
+                                <input type="number" @bind="Limit" min="1" max="1000" disabled="@Orchestrator.IsRunning" 
+                                       class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Min Score</label>
+                                <input type="number" @bind="MinScore" min="0" disabled="@Orchestrator.IsRunning" 
+                                       class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium" />
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Sort Order</label>
+                            <select @bind="Sort" disabled="@Orchestrator.IsRunning" 
+                                    class="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-zinc-900 transition-colors font-medium appearance-none">
+                                <option value="desc">Newest first</option>
+                                <option value="asc">Oldest first</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    @if (_validationError is not null)
+                    {
+                        <div class="p-3 bg-red-50 text-red-600 text-xs rounded-lg font-medium">
+                            @_validationError
+                        </div>
+                    }
+
+                    @if (Orchestrator.IsRunning)
+                    {
+                        <button @onclick="Cancel" class="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center justify-center gap-2">
+                            <iconify-icon icon="lucide:square" class="text-xs"></iconify-icon>
+                            Cancel Job
+                        </button>
+                    }
+                    else
+                    {
+                        <button @onclick="StartCrawl" class="w-full py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center justify-center gap-2">
+                            <iconify-icon icon="lucide:play" class="text-xs"></iconify-icon>
+                            Start Pipeline
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <!-- Pipeline Monitoring -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Live Metrics -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="p-4 rounded-xl border border-zinc-200/60 bg-white shadow-sm">
+                        <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Posts</p>
+                        <p class="text-xl font-semibold text-zinc-900">@Orchestrator.PostsProcessed</p>
+                    </div>
+                    <div class="p-4 rounded-xl border border-zinc-200/60 bg-white shadow-sm">
+                        <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Chunks</p>
+                        <p class="text-xl font-semibold text-zinc-900">@Orchestrator.ChunksGenerated</p>
+                    </div>
+                    <div class="p-4 rounded-xl border border-zinc-200/60 bg-white shadow-sm">
+                        <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Embeddings</p>
+                        <p class="text-xl font-semibold text-zinc-900">@Orchestrator.EmbeddingsGenerated</p>
+                    </div>
+                    <div class="p-4 rounded-xl border border-zinc-200/60 bg-white shadow-sm">
+                        <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Upserts</p>
+                        <p class="text-xl font-semibold text-zinc-900">@Orchestrator.VectorUpserts</p>
+                    </div>
+                </div>
+
+                <!-- Log Terminal -->
+                <div class="rounded-xl border border-zinc-200/60 bg-zinc-950 shadow-lg overflow-hidden flex flex-col h-[400px]">
+                    <div class="px-4 py-2 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="flex gap-1.5">
+                                <div class="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+                                <div class="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+                                <div class="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+                            </div>
+                            <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-2">Pipeline Log</span>
+                        </div>
+                        @if (Orchestrator.IsRunning)
+                        {
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] font-bold text-emerald-500 uppercase tracking-widest animate-pulse">Running</span>
+                                <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                            </div>
+                        }
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-4 font-mono text-[12px] leading-relaxed text-zinc-400" id="log-terminal" @ref="_logPanel">
+                        @foreach (var msg in Orchestrator.GetLogSnapshot())
+                        {
+                            <div class="mb-1">
+                                <span class="text-zinc-600 mr-2">[@DateTime.Now.ToString("HH:mm:ss")]</span>
+                                <span class="@GetLogClass(msg)">@msg</span>
+                            </div>
+                        }
+                        
+                        @if (Orchestrator.IsRunning && Orchestrator.CurrentSubreddit is not null)
+                        {
+                            <div class="mt-2 flex items-center gap-2 text-zinc-300">
+                                <iconify-icon icon="lucide:loader-2" class="animate-spin text-sm"></iconify-icon>
+                                Processing r/@Orchestrator.CurrentSubreddit...
+                            </div>
+                        }
+                        
+                        @if (!Orchestrator.IsRunning && Orchestrator.PostsProcessed == 0)
+                        {
+                            <div class="h-full flex flex-col items-center justify-center text-zinc-700 opacity-50 space-y-2">
+                                <iconify-icon icon="lucide:terminal" class="text-3xl"></iconify-icon>
+                                <p class="text-[10px] font-bold uppercase tracking-widest">Awaiting Command</p>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string SubredditsInput { get; set; } = string.Empty;
+    private int Limit { get; set; } = 100;
+    private string Sort { get; set; } = "desc";
+    private int MinScore { get; set; } = 0;
+    private string? _validationError;
+    private ElementReference _logPanel;
+
+    protected override void OnInitialized()
+    {
+        Orchestrator.OnStateChanged -= StateHasChanged;
+        Orchestrator.OnStateChanged += StateHasChanged;
+        HealthService.OnHealthChanged -= StateHasChanged;
+        HealthService.OnHealthChanged += StateHasChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Orchestrator.GetLogSnapshot().Count > 0)
+            await JS.InvokeVoidAsync("blazorScrollToBottom", "log-terminal");
+    }
+
+    private string GetLogClass(string msg)
+    {
+        if (msg.Contains("Error", StringComparison.OrdinalIgnoreCase) || msg.Contains("Failed", StringComparison.OrdinalIgnoreCase)) return "text-red-400";
+        if (msg.Contains("Success", StringComparison.OrdinalIgnoreCase)) return "text-emerald-400";
+        if (msg.Contains("Crawling", StringComparison.OrdinalIgnoreCase)) return "text-blue-400";
+        return "text-zinc-400";
+    }
+
+    private async Task StartCrawl()
+    {
+        var subreddits = SubredditsInput
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => s.StartsWith("r/", StringComparison.OrdinalIgnoreCase) ? s[2..] : s)
+            .Where(s => s.Length > 0)
+            .ToList();
+
+        if (subreddits.Count == 0)
+        {
+            _validationError = "Please enter at least one subreddit.";
+            return;
+        }
+
+        // Validate subreddit names (Reddit allows only alphanumeric + underscores, 3-21 chars)
+        var invalidSubs = subreddits.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-zA-Z0-9_]{1,21}$")).ToList();
+        if (invalidSubs.Count > 0)
+        {
+            _validationError = $"Invalid subreddit name(s): {string.Join(", ", invalidSubs)}. Use only letters, numbers, and underscores.";
+            return;
+        }
+
+        if (Limit < 1 || Limit > 1000)
+        {
+            _validationError = "Limit must be between 1 and 1000.";
+            return;
+        }
+
+        _validationError = null;
+
+        await Orchestrator.StartCrawlAsync(subreddits, Limit, Sort, MinScore);
+    }
+
+    private void Cancel() => Orchestrator.Cancel();
+
+    public void Dispose()
+    {
+        Orchestrator.OnStateChanged -= StateHasChanged;
+        HealthService.OnHealthChanged -= StateHasChanged;
+    }
+}

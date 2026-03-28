@@ -1,0 +1,120 @@
+@inherits LayoutComponentBase
+@using RedditCrawler.Web.Services
+@inject ConnectionHealthService HealthService
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<div class="flex h-screen w-full overflow-hidden bg-zinc-50">
+
+    <!-- Sidebar backdrop (mobile, shown when open) -->
+    @if (_sidebarOpen)
+    {
+        <div class="fixed inset-0 z-10 bg-black bg-opacity-20 md:hidden"
+             @onclick="CloseSidebar"></div>
+    }
+
+    <!-- Sidebar -->
+    <aside class="@SidebarClass flex-shrink-0 flex flex-col bg-zinc-50 border-r border-zinc-200 z-20 h-full transition-all duration-200">
+
+        <!-- Logo + close toggle -->
+        <div class="h-14 flex items-center justify-between px-4 shrink-0">
+            <a href="/" class="text-zinc-900 font-semibold tracking-tight text-sm select-none">RC.</a>
+            <button @onclick="ToggleSidebar"
+                    class="text-zinc-400 hover:text-zinc-700 transition-colors p-1 rounded"
+                    aria-label="Toggle sidebar">
+                <iconify-icon icon="solar:sidebar-minimalistic-outline" class="text-lg"></iconify-icon>
+            </button>
+        </div>
+
+        <!-- Nav -->
+        <div class="flex-1 overflow-y-auto px-3 py-2">
+            <NavMenu />
+        </div>
+
+        <!-- System health -->
+        <div class="px-4 pb-5 pt-3 border-t border-zinc-100 flex items-center gap-3">
+            <div class="flex items-center gap-1.5" role="status" aria-label="Ollama: @HealthService.OllamaStatusText">
+                <div class="w-1.5 h-1.5 rounded-full @GetStatusClass(HealthService.OllamaStatus)"></div>
+                <span class="text-xs text-zinc-400 font-medium">Ollama</span>
+            </div>
+            <div class="flex items-center gap-1.5" role="status" aria-label="PostgreSQL: @HealthService.VectorStatusText">
+                <div class="w-1.5 h-1.5 rounded-full @GetStatusClass(HealthService.VectorStatus)"></div>
+                <span class="text-xs text-zinc-400 font-medium">PostgreSQL</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+
+        <!-- Top bar -->
+        <header class="h-14 flex items-center gap-3 px-5 shrink-0 bg-white border-b border-zinc-100">
+            <!-- Show open button only when sidebar is closed -->
+            @if (!_sidebarOpen)
+            {
+                <button @onclick="ToggleSidebar"
+                        class="text-zinc-400 hover:text-zinc-700 transition-colors p-1 rounded"
+                        aria-label="Open sidebar">
+                    <iconify-icon icon="solar:hamburger-menu-outline" class="text-lg"></iconify-icon>
+                </button>
+            }
+
+            <div class="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
+                <span>RAG Studio</span>
+                <iconify-icon icon="solar:alt-arrow-right-outline" class="text-xs"></iconify-icon>
+                <span class="text-zinc-700">@GetPageTitle()</span>
+            </div>
+        </header>
+
+        <!-- Page body -->
+        <div class="flex-1 overflow-y-auto">
+            @Body
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _sidebarOpen = true;
+
+    private string SidebarClass => _sidebarOpen
+        ? "w-60 fixed md:relative"
+        : "w-0 overflow-hidden fixed md:relative md:w-0";
+
+    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+    private void CloseSidebar() => _sidebarOpen = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        HealthService.OnHealthChanged -= StateHasChanged;
+        HealthService.OnHealthChanged += StateHasChanged;
+        _ = HealthService.CheckAllAsync();
+    }
+
+    private string GetStatusClass(string status) => status.ToLower() switch
+    {
+        "ok"    => "bg-emerald-400",
+        "error" => "bg-red-400",
+        _       => "bg-zinc-300"
+    };
+
+    private string GetPageTitle()
+    {
+        var uri = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        var first = uri.Split('/')[0];
+        return first.ToLower() switch
+        {
+            "ask"      => "Chat",
+            "browse"   => "Document Search",
+            "library"  => "Saved Threads",
+            "crawl"    => "Ingestion Jobs",
+            "settings" => "Settings",
+            ""         => "Overview",
+            _          => first
+        };
+    }
+
+    public void Dispose()
+    {
+        HealthService.OnHealthChanged -= StateHasChanged;
+    }
+}

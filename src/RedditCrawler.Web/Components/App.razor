@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RedditCrawler | Lean RAG</title>
+    <base href="/" />
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/app.css" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+    <style>
+        :root {
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #d4d4d8;
+            border-radius: 2px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a1a1aa;
+        }
+
+        ::selection {
+            background: #e4e4e7;
+            color: #000;
+        }
+
+        iconify-icon {
+            stroke-width: 1.5px;
+        }
+
+        @@keyframes progress {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(200%); }
+        }
+    </style>
+</head>
+
+<body class="bg-[#fcfcfc] text-zinc-600 font-sans h-screen w-full flex overflow-hidden antialiased text-sm selection:bg-zinc-200" style="font-family: var(--font-sans);">
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script>
+        window.blazorScrollToBottom = function(el) {
+            if (typeof el === 'string') el = document.getElementById(el);
+            if (el) el.scrollTop = el.scrollHeight;
+        };
+    </script>
+</body>
+
+</html>

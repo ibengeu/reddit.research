@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
+WORKDIR /src
+
+COPY src/RedditCrawler.Core/RedditCrawler.Core.csproj src/RedditCrawler.Core/
+COPY src/RedditCrawler.Web/RedditCrawler.Web.csproj src/RedditCrawler.Web/
+RUN dotnet restore src/RedditCrawler.Web/RedditCrawler.Web.csproj
+
+COPY . .
+RUN dotnet publish src/RedditCrawler.Web/RedditCrawler.Web.csproj -c Release -o /app
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-preview
+WORKDIR /app
+COPY --from=build /app .
+
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+
+ENTRYPOINT ["dotnet", "RedditCrawler.Web.dll"]

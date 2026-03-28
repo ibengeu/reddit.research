@@ -1,0 +1,40 @@
+/* Reset and Base */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #d4d4d8;
+    border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+}
+
+/* Accessible focus indicator for nav links */
+.nav-link:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #18181b;
+    border-radius: 6px;
+}
+
+/* Animation for processing */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
