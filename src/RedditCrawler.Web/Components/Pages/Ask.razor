@@ -4,11 +4,14 @@
 @using RedditCrawler.Services
 @using RedditCrawler.Configuration
 @using RedditCrawler.Models
+@using RedditCrawler.Web.Services
 @inject IChatService ChatService
 @inject IVectorStoreService VectorStore
 @inject RagConfig RagConfig
 @inject OpenRouterConfig OpenRouterConfig
 @inject IJSRuntime JS
+@inject RateLimiterService RateLimiter
+@inject IHttpContextAccessor HttpContextAccessor
 @implements IDisposable
 
 <div class="flex h-full overflow-hidden bg-white">
@@ -187,7 +190,12 @@
                         </button>
                     }
                 </div>
-                <p class="text-[10px] text-zinc-400 font-medium mt-1.5 text-right pr-1">Shift + Return for new line</p>
+                <div class="flex items-center justify-between mt-1.5 px-1">
+                    <span class="text-xs text-zinc-400 font-medium">
+                        @RemainingQueries / @RateLimiterService.MaxRequests questions remaining today
+                    </span>
+                    <span class="text-xs text-zinc-400 font-medium">Shift + Return for new line</span>
+                </div>
             </div>
         </div>
     </div>
@@ -282,11 +290,29 @@
     private int _tokensSinceRender;
     private const int RenderBatchSize = 5;
     private CancellationTokenSource? _cts;
+    private string _clientIp = "unknown";
+
+    private int RemainingQueries
+    {
+        get
+        {
+            var (used, _) = RateLimiter.GetStatus(_clientIp);
+            return Math.Max(0, RateLimiterService.MaxRequests - used);
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
         _stats = await VectorStore.GetStatsAsync();
         TopK = RagConfig.TopK;
+
+        var ctx = HttpContextAccessor.HttpContext;
+        if (ctx is not null)
+        {
+            _clientIp = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+                ?? ctx.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown";
+        }
     }
 
     private void ToggleParams() => _showParams = !_showParams;
@@ -309,6 +335,14 @@
     private async Task AskQuestion()
     {
         if (string.IsNullOrWhiteSpace(Question) || IsLoading) return;
+
+        if (!RateLimiter.TryConsume(_clientIp))
+        {
+            var (_, resetsAt) = RateLimiter.GetStatus(_clientIp);
+            var resetsIn = resetsAt.HasValue ? $" Resets in {(int)(resetsAt.Value - DateTimeOffset.UtcNow).TotalHours}h." : "";
+            Error = $"You've reached the {RateLimiterService.MaxRequests}-question demo limit.{resetsIn}";
+            return;
+        }
 
         _showParams = false;
         var userQuestion = Question;

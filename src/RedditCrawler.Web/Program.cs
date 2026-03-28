@@ -60,6 +60,8 @@ try
     builder.Services.AddRedditCrawlerCore(crawlerConfig, ollamaConfig, vectorConfig, ragConfig, openRouterConfig);
     builder.Services.AddSingleton<CrawlOrchestrator>();
     builder.Services.AddSingleton<ConnectionHealthService>();
+    builder.Services.AddSingleton<RateLimiterService>();
+    builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<SettingsPersistenceService>(sp =>
         new SettingsPersistenceService(
             persistDir,
